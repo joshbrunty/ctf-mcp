@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+
+# Challenge files and solver output belong in the workspace, not the repo
+ctf-workspace/
+*.pcap
+*.pcapng
+
+.DS_Store

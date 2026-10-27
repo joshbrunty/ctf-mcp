@@ -1,0 +1,35 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ctf-mcp"
+version = "0.1.0"
+description = "MCP server that gives Claude a CTF toolkit: crypto, forensics/stego, reversing/pwn and web"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Josh Brunty", email = "josh.brunty@marshall.edu" }]
+dependencies = [
+    "mcp>=2.0,<3",
+    "httpx>=0.27",
+    "pillow>=10",
+    "pycryptodome>=3.20",
+    "pyelftools>=0.31",
+    "pefile>=2023.2.7",
+    "capstone>=5.0",
+    "scapy>=2.5",
+]
+
+[project.optional-dependencies]
+# pwntools is handy inside run_python, but it is heavy and does not build everywhere
+pwn = ["pwntools>=4.12"]
+dev = ["pytest"]
+
+[project.scripts]
+ctf-mcp = "ctf_mcp.server:main"
+
+[tool.setuptools.packages.find]
+include = ["ctf_mcp*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
