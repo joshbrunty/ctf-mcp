@@ -17,14 +17,14 @@ Requires Python 3.10+.
 **macOS / Linux**
 
 ```bash
-git clone <this repo> ctf-mcp && cd ctf-mcp
+git clone https://github.com/joshbrunty/ctf-mcp.git && cd ctf-mcp
 ./scripts/install.sh          # add --pwn to also install pwntools
 ```
 
 **Windows (PowerShell)**
 
 ```powershell
-git clone <this repo> ctf-mcp; cd ctf-mcp
+git clone https://github.com/joshbrunty/ctf-mcp.git; cd ctf-mcp
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 ```
 
