@@ -53,5 +53,23 @@ else
     echo "--> Claude Desktop config folder not found; skipping (see README for manual setup)"
 fi
 
+# GitHub Copilot: VS Code (agent mode) and Copilot CLI both read this portable file.
+COPILOT_CONFIG="${COPILOT_HOME:-$HOME/.copilot}/mcp-config.json"
+echo "==> Adding ctf-solver to GitHub Copilot config ($COPILOT_CONFIG)"
+mkdir -p "$(dirname "$COPILOT_CONFIG")"
+[[ -f "$COPILOT_CONFIG" ]] && cp "$COPILOT_CONFIG" "$COPILOT_CONFIG.bak"
+"$ROOT/.venv/bin/python" - "$COPILOT_CONFIG" "$SERVER" "$WORKSPACE" <<'EOF'
+import json, sys
+from pathlib import Path
+path, server, workspace = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+config = json.loads(path.read_text()) if path.exists() and path.read_text().strip() else {}
+entry = config.setdefault("mcpServers", {}).get("ctf-solver", {})
+env = entry.get("env", {})
+env["CTF_WORKSPACE"] = workspace
+config["mcpServers"]["ctf-solver"] = {"type": "stdio", "command": server, "args": [], "env": env, "tools": ["*"]}
+path.write_text(json.dumps(config, indent=2) + "\n")
+EOF
+echo "    In VS Code, open Copilot Chat in Agent mode; ctf-solver appears under the tools picker."
+
 echo "==> Done. Workspace: $WORKSPACE"
 echo "    Check optional tools with the toolchain_status tool, or: $ROOT/.venv/bin/python -c 'from ctf_mcp.execution import toolchain_status as t; import json; print(json.dumps(t(), indent=2))'"
