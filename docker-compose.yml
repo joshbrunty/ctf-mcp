@@ -1,0 +1,39 @@
+# Private remote MVP — Tailscale / lab VLAN first.
+# 1. cp .env.example .env
+#    - CTF_MCP_AUTH_TOKEN (or CTF_MCP_AUTH_TOKENS=alice:…,bob:…)
+#    - CTF_MCP_COACH_TOKEN for Josh's desk visibility
+# 2. docker compose up --build
+# 3. Players: http://127.0.0.1:8765/  (upload challenges)
+# 4. Coach: same URL → Coach tab with coach token
+# 5. Point Claude/Cursor at http://<host>:8765/mcp with Authorization: Bearer <player-token>
+#
+# Port is bound to 127.0.0.1 by default. For Tailscale: mesh on the host +
+# CTF_MCP_PUBLIC_URL=http://100.x.y.z:8765, or widen ports + ALLOWED_HOSTS.
+
+services:
+  ctf-mcp:
+    build: .
+    image: ctf-mcp:local
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      CTF_MCP_HOSTED: "1"
+      CTF_MCP_TRANSPORT: streamable-http
+      CTF_MCP_HOST: "0.0.0.0"
+      CTF_MCP_PORT: "8765"
+      CTF_MCP_HTTP_PATH: /mcp
+      CTF_WORKSPACE: /data/workspaces
+      CTF_MCP_ISOLATE_SESSIONS: "1"
+      CTF_MCP_AUDIT_LOG: /data/workspaces/audit.jsonl
+      # From .env: CTF_MCP_AUTH_TOKEN / AUTH_TOKENS / COACH_TOKEN / PUBLIC_URL / SCOPE
+    ports:
+      - "127.0.0.1:8765:8765"
+    volumes:
+      - ./data/workspaces:/data/workspaces
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8765/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s

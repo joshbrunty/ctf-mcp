@@ -9,7 +9,12 @@ dist/
 
 # Challenge files and solver output belong in the workspace, not the repo
 ctf-workspace/
+data/
 *.pcap
 *.pcapng
+
+# Local deploy secrets
+.env
+.env.local
 
 .DS_Store

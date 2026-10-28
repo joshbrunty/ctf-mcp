@@ -14,31 +14,81 @@ import ssl
 import time
 import urllib.parse
 
+from .audit import audit
 from .common import clip, find_flags, preview, to_text
+from .config import scope_verify_ips
 
 
 def scope_rules() -> list[str]:
     return [s.strip().lower() for s in os.environ.get("CTF_SCOPE", "").split(",") if s.strip()]
 
 
-def check_scope(host: str) -> str:
+def _host_matches_rule(host: str, rule: str) -> bool:
+    if rule.startswith("*.") and (host.endswith(rule[1:]) or host == rule[2:]):
+        return True
+    if host == rule:
+        return True
+    try:
+        if ipaddress.ip_address(host) in ipaddress.ip_network(rule, strict=False):
+            return True
+    except ValueError:
+        pass
+    return False
+
+
+def _cidr_rules(rules: list[str]) -> list[str]:
+    out = []
+    for rule in rules:
+        try:
+            ipaddress.ip_network(rule, strict=False)
+            out.append(rule)
+        except ValueError:
+            pass
+    return out
+
+
+def _hostname_matches_any(host: str, rules: list[str]) -> bool:
+    return any(_host_matches_rule(host, rule) for rule in rules)
+
+
+def check_scope(host: str, *, verify_ips: bool | None = None) -> str:
     """Raise if host is outside CTF_SCOPE (comma-separated hosts, *.domains, IPs or CIDRs).
-    Returns a warning string when no scope is configured."""
+
+    When scope includes CIDR/IP rules and CTF_SCOPE_VERIFY_IPS is on (default), hostnames
+    that match by name must also resolve to addresses inside one of those CIDRs.
+    Returns a warning string when no scope is configured.
+    """
     rules = scope_rules()
     if not rules:
         return "CTF_SCOPE is not set: no target restriction. Set it to the event's hosts/CIDRs."
-    host = host.lower().strip("[]")
-    for rule in rules:
-        if rule.startswith("*.") and (host.endswith(rule[1:]) or host == rule[2:]):
-            return ""
-        if host == rule:
-            return ""
+    host = (host or "").lower().strip("[]")
+    if not host:
+        raise PermissionError("empty host is outside CTF_SCOPE")
+    if not _hostname_matches_any(host, rules):
+        audit("scope_denied", host=host, rules=rules)
+        raise PermissionError(f"{host} is outside CTF_SCOPE ({', '.join(rules)}). Only attack in-scope targets.")
+
+    do_verify = scope_verify_ips() if verify_ips is None else verify_ips
+    cidrs = _cidr_rules(rules)
+    if do_verify and cidrs:
         try:
-            if ipaddress.ip_address(host) in ipaddress.ip_network(rule, strict=False):
-                return ""
+            ipaddress.ip_address(host)
+            # Literal IP already matched a rule above (hostname or CIDR).
+            return ""
         except ValueError:
             pass
-    raise PermissionError(f"{host} is outside CTF_SCOPE ({', '.join(rules)}). Only attack in-scope targets.")
+        try:
+            addrs = sorted({ai[4][0] for ai in socket.getaddrinfo(host, None)})
+        except socket.gaierror as exc:
+            audit("scope_dns_failed", host=host, error=str(exc))
+            raise PermissionError(f"cannot resolve {host} for CTF_SCOPE IP check: {exc}") from exc
+        for ip in addrs:
+            if not any(_host_matches_rule(ip, rule) for rule in cidrs):
+                audit("scope_denied", host=host, ip=ip, reason="resolved_ip_outside_cidr", rules=rules)
+                raise PermissionError(
+                    f"{host} resolved to {ip}, which is outside CTF_SCOPE CIDRs ({', '.join(cidrs)})."
+                )
+    return ""
 
 
 def _html_findings(body: str) -> dict:
@@ -56,20 +106,42 @@ def http_request(url: str, method: str = "GET", headers: dict | None = None, bod
                  follow_redirects: bool = True, verify_tls: bool = False, timeout: int = 20) -> dict:
     """Send an HTTP request to an in-scope target and return status, headers, cookies, body,
     HTML comments/forms/links, and any flags. TLS verification is off by default because
-    CTF services often use self-signed certificates."""
+    CTF services often use self-signed certificates.
+
+    Redirect targets are re-checked against CTF_SCOPE before each hop.
+    """
     import httpx
 
     warning = check_scope(urllib.parse.urlsplit(url).hostname or "")
-    with httpx.Client(verify=verify_tls, follow_redirects=follow_redirects, timeout=timeout) as client:
-        r = client.request(method.upper(), url, headers=headers, params=params, cookies=cookies,
+    history: list[str] = []
+    current_url = url
+    max_redirects = 10 if follow_redirects else 0
+
+    with httpx.Client(verify=verify_tls, follow_redirects=False, timeout=timeout) as client:
+        r = client.request(method.upper(), current_url, headers=headers, params=params, cookies=cookies,
                            content=body.encode() if body else None, json=json_body)
+        hops = 0
+        while follow_redirects and r.is_redirect and hops < max_redirects:
+            loc = r.headers.get("location")
+            if not loc:
+                break
+            next_url = urllib.parse.urljoin(str(r.url), loc)
+            next_host = urllib.parse.urlsplit(next_url).hostname or ""
+            check_scope(next_host)
+            history.append(f"{r.status_code} {r.url}")
+            # After the first response, continue with GET (browser-like for 302/303).
+            next_method = "GET" if r.status_code in (301, 302, 303) else method.upper()
+            r = client.request(next_method, next_url, headers=headers, cookies=cookies)
+            hops += 1
+            current_url = next_url
+
     content = r.content
     text = r.text if "text" in r.headers.get("content-type", "") or "json" in r.headers.get("content-type", "") \
         or "javascript" in r.headers.get("content-type", "") else None
     out = {
         "status": r.status_code,
         "url": str(r.url),
-        "redirects": [f"{h.status_code} {h.url}" for h in r.history],
+        "redirects": history,
         "headers": dict(r.headers),
         "cookies": dict(r.cookies),
         "body": clip(text, 15000) if text is not None else preview(content, 3000),
@@ -164,8 +236,14 @@ def tcp_exchange(host: str, port: int, send: list[str] | None = None, read_timeo
 
 
 def dns_lookup(host: str) -> dict:
-    """Resolve a hostname (A/AAAA) and reverse-resolve IPs. Use run_tool with dig for TXT/MX/AXFR."""
+    """Resolve a hostname (A/AAAA) and reverse-resolve IPs. Use run_tool with dig for TXT/MX/AXFR.
+
+    Requires the hostname (or a covering rule) to be inside CTF_SCOPE when scope is set.
+    """
+    warning = check_scope(host, verify_ips=False)
     out: dict = {"host": host}
+    if warning:
+        out["scope_warning"] = warning
     try:
         out["addresses"] = sorted({ai[4][0] for ai in socket.getaddrinfo(host, None)})
     except socket.gaierror as exc:

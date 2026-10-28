@@ -6,10 +6,20 @@ import pytest
 
 @pytest.fixture(autouse=True)
 def isolated_workspace(tmp_path, monkeypatch):
-    monkeypatch.setenv("CTF_WORKSPACE", str(tmp_path / "ws"))
+    ws = tmp_path / "ws"
+    ws.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setenv("CTF_WORKSPACE", str(ws))
     monkeypatch.delenv("CTF_SCOPE", raising=False)
     monkeypatch.delenv("CTF_FLAG_REGEX", raising=False)
-    return tmp_path / "ws"
+    monkeypatch.delenv("CTF_MCP_HOSTED", raising=False)
+    monkeypatch.delenv("CTF_MCP_ALLOW_HOST_PATHS", raising=False)
+    monkeypatch.delenv("CTF_MCP_DISABLE_EXEC", raising=False)
+    monkeypatch.delenv("CTF_MCP_ALLOW_ANY_TOOL", raising=False)
+    monkeypatch.delenv("CTF_MCP_ALLOW_FACTORDB", raising=False)
+    monkeypatch.delenv("CTF_MCP_AUDIT", raising=False)
+    monkeypatch.delenv("CTF_MCP_UNSAFE_EXEC", raising=False)
+    monkeypatch.delenv("CTF_SCOPE_VERIFY_IPS", raising=False)
+    return ws
 
 
 def build_elf() -> bytes:

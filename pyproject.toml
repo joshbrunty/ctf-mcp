@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ctf-mcp"
-version = "0.1.0"
+version = "0.2.0"
 description = "MCP server that gives Claude a CTF toolkit: crypto, forensics/stego, reversing/pwn and web"
 readme = "README.md"
 requires-python = ">=3.10"
