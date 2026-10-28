@@ -83,11 +83,11 @@ def test_rsa_common_modulus():
 
 # --------------------------------------------------------------------------- forensics
 
-def test_file_triage_finds_appended_zip(tmp_path):
+def test_file_triage_finds_appended_zip(isolated_workspace):
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         zf.writestr("flag.txt", FLAG)
-    path = tmp_path / "cat.png"
+    path = isolated_workspace / "cat.png"
     path.write_bytes(png_bytes(2, 2, [(1, 2, 3)] * 4) + buf.getvalue())
     out = forensics.file_triage(str(path))
     assert out["detected_type"] == "PNG image"
@@ -97,17 +97,17 @@ def test_file_triage_finds_appended_zip(tmp_path):
     assert "flag.txt" in extracted[0]["zip_entries"]
 
 
-def test_png_fix_dimensions(tmp_path):
+def test_png_fix_dimensions(isolated_workspace):
     data = bytearray(png_bytes(4, 3, [(0, 0, 0)] * 12))
     data[20:24] = (1).to_bytes(4, "big")  # height 3 -> 1, CRC left stale
-    path = tmp_path / "short.png"
+    path = isolated_workspace / "short.png"
     path.write_bytes(data)
     assert "IHDR" in forensics.image_analyze(str(path))["png_crc_errors"]
     out = forensics.png_fix_dimensions(str(path))
     assert (out["width"], out["height"]) == (4, 3)
 
 
-def test_lsb_roundtrip(tmp_path):
+def test_lsb_roundtrip(isolated_workspace):
     payload = FLAG.encode() + b"\x00" * 4
     bits = [int(b) for byte in payload for b in f"{byte:08b}"]
     w = h = 16
@@ -120,19 +120,19 @@ def test_lsb_roundtrip(tmp_path):
         pixels.append(tuple(rgb))
     img = Image.new("RGB", (w, h))
     img.putdata(pixels)
-    path = tmp_path / "lsb.png"
+    path = isolated_workspace / "lsb.png"
     img.save(path)
     assert FLAG in forensics.lsb_extract(str(path))["flags"]
     hits = forensics.stego_lsb_scan(str(path))["hits"]
     assert hits and FLAG in hits[0]["flags"]
 
 
-def test_pcap_summary_and_streams(tmp_path):
+def test_pcap_summary_and_streams(isolated_workspace):
     from scapy.all import IP, TCP, Raw, wrpcap
 
     pkts = [IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=4444, dport=21, seq=1) / Raw(b"USER herd\r\n"),
             IP(src="10.0.0.1", dst="10.0.0.2") / TCP(sport=4444, dport=21, seq=12) / Raw(b"PASS " + FLAG.encode() + b"\r\n")]
-    path = tmp_path / "ftp.pcap"
+    path = isolated_workspace / "ftp.pcap"
     wrpcap(str(path), pkts)
     summary = forensics.pcap_summary(str(path))
     assert FLAG in summary["flags"]
@@ -145,8 +145,8 @@ def test_pcap_summary_and_streams(tmp_path):
 # --------------------------------------------------------------------------- reversing
 
 @pytest.fixture
-def elf_path(tmp_path):
-    path = tmp_path / "chall"
+def elf_path(isolated_workspace):
+    path = isolated_workspace / "chall"
     path.write_bytes(build_elf())
     return str(path)
 

@@ -44,4 +44,23 @@ path.write_text(json.dumps(config, indent=2) + '\n')
 } else {
     Write-Host "--> Claude Desktop config folder not found; skipping (see README)"
 }
+# GitHub Copilot: VS Code (agent mode) and Copilot CLI both read this portable file.
+$CopilotHome = if ($env:COPILOT_HOME) { $env:COPILOT_HOME } else { "$HOME\.copilot" }
+$CopilotConfig = "$CopilotHome\mcp-config.json"
+Write-Host "==> Adding ctf-solver to GitHub Copilot config ($CopilotConfig)"
+New-Item -ItemType Directory -Force -Path $CopilotHome | Out-Null
+if (Test-Path $CopilotConfig) { Copy-Item $CopilotConfig "$CopilotConfig.bak" -Force }
+& "$Root\.venv\Scripts\python.exe" -c @"
+import json, sys
+from pathlib import Path
+path, server, workspace = Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+config = json.loads(path.read_text()) if path.exists() and path.read_text().strip() else {}
+entry = config.setdefault('mcpServers', {}).get('ctf-solver', {})
+env = entry.get('env', {})
+env['CTF_WORKSPACE'] = workspace
+config['mcpServers']['ctf-solver'] = {'type': 'stdio', 'command': server, 'args': [], 'env': env, 'tools': ['*']}
+path.write_text(json.dumps(config, indent=2) + '\n')
+"@ $CopilotConfig $Server $Workspace
+Write-Host "    In VS Code, open Copilot Chat in Agent mode; ctf-solver appears under the tools picker."
+
 Write-Host "==> Done. Workspace: $Workspace"

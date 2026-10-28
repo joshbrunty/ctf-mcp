@@ -9,7 +9,9 @@ import sys
 import time
 import importlib.util
 
+from .audit import audit
 from .common import clip, find_flags, output_path, workspace
+from .config import allow_any_tool_enabled, exec_enabled, hosted_mode, safety_snapshot, sandbox_requested
 
 # Offline analysis tools. Network clients (curl, nmap, nc) are left out on purpose so every
 # connection goes through the scope-checked web tools.
@@ -55,13 +57,18 @@ def run_tool(command: list[str], timeout: int = 120, stdin: str = "") -> dict:
     if not command:
         raise ValueError("command is empty")
     name = os.path.basename(command[0])
-    if name not in ALLOWED_TOOLS and os.environ.get("CTF_MCP_ALLOW_ANY_TOOL") != "1":
+    if name not in ALLOWED_TOOLS and not allow_any_tool_enabled():
+        if hosted_mode() and os.environ.get("CTF_MCP_ALLOW_ANY_TOOL") == "1":
+            raise PermissionError(
+                f"{name} is not on the allowlist, and CTF_MCP_ALLOW_ANY_TOOL is denied in hosted mode."
+            )
         raise PermissionError(f"{name} is not on the allowlist. Use run_python, or set CTF_MCP_ALLOW_ANY_TOOL=1.")
     exe = shutil.which(command[0])
     if not exe:
         hint = INSTALL_HINTS.get(name, "install it with brew/apt/pip")
         raise FileNotFoundError(f"{name} is not installed ({hint})")
     start = time.monotonic()
+    audit("run_tool", tool=name, argv=command[:12], timeout=timeout)
     try:
         proc = subprocess.run([exe] + command[1:], cwd=workspace(), input=stdin.encode() if stdin else None,
                               capture_output=True, timeout=timeout)
@@ -73,16 +80,40 @@ def run_tool(command: list[str], timeout: int = 120, stdin: str = "") -> dict:
             "stdout": clip(stdout), "stderr": clip(stderr, 5000), "flags": find_flags(stdout + stderr)}
 
 
+def _sandbox_stub_message() -> str:
+    return (
+        "Hosted sandbox exec is not implemented yet (Phase 1 stub). "
+        "Keep CTF_MCP_DISABLE_EXEC unset/1, or run locally without CTF_MCP_HOSTED. "
+        "Container/Firejail isolation lands with remote hosting."
+    )
+
+
 def run_python(code: str, timeout: int = 120, stdin: str = "") -> dict:
     """Run a Python 3 solver script (with pycryptodome, Pillow, scapy, capstone and, if
     installed, pwntools available) in the workspace. Print results to stdout. The script is
     saved under workspace/scripts so the team can reuse it in writeups.
-    Disabled when CTF_MCP_DISABLE_EXEC=1. Note: scripts are not limited by CTF_SCOPE."""
-    if os.environ.get("CTF_MCP_DISABLE_EXEC") == "1":
-        raise PermissionError("run_python is disabled (CTF_MCP_DISABLE_EXEC=1)")
+
+    Disabled when CTF_MCP_DISABLE_EXEC=1, and by default when CTF_MCP_HOSTED=1.
+    Note: scripts are not limited by CTF_SCOPE. Hosted sandbox path is stubbed.
+    """
+    if not exec_enabled():
+        audit("run_python_denied", reason="exec_disabled", hosted=hosted_mode())
+        raise PermissionError(
+            "run_python is disabled "
+            f"({'CTF_MCP_HOSTED=1 defaults to no exec' if hosted_mode() else 'CTF_MCP_DISABLE_EXEC=1'}). "
+            "Set CTF_MCP_DISABLE_EXEC=0 only on a trusted host."
+        )
+    if hosted_mode() or sandbox_requested():
+        # Phase 1: prefer disable-by-default; if someone forces exec on hosted, still refuse
+        # until a real sandbox exists — unless they explicitly opt into unsandboxed with
+        # CTF_MCP_UNSAFE_EXEC=1 (documented break-glass for lab boxes).
+        if not os.environ.get("CTF_MCP_UNSAFE_EXEC") == "1":
+            audit("run_python_denied", reason="sandbox_stub")
+            raise PermissionError(_sandbox_stub_message())
     script = output_path("scripts", time.strftime("solve_%Y%m%d_%H%M%S.py"))
     script.write_text(code)
     env = {**os.environ, "PWNLIB_NOTERM": "1", "PYTHONUNBUFFERED": "1"}
+    audit("run_python", script=str(script), timeout=timeout, code_len=len(code))
     try:
         proc = subprocess.run([sys.executable, str(script)], cwd=workspace(), env=env,
                               input=stdin.encode() if stdin else None, capture_output=True, timeout=timeout)
@@ -109,7 +140,8 @@ def toolchain_status() -> dict:
         "workspace": str(workspace()),
         "flag_regex": flag_regex().pattern,
         "scope": scope_rules() or "unrestricted (set CTF_SCOPE)",
-        "run_python_enabled": os.environ.get("CTF_MCP_DISABLE_EXEC") != "1",
+        "run_python_enabled": exec_enabled(),
+        "safety": safety_snapshot(),
         "tools": present,
         "missing_install_hints": {t: INSTALL_HINTS.get(t, "") for t, ok in present.items() if not ok},
         "python_modules": modules,

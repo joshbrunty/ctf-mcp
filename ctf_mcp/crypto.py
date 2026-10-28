@@ -758,10 +758,14 @@ def _phi(factors: list[int]) -> int:
 
 
 def rsa_solve(n: str, e: str = "65537", c: str = "", p: str = "", q: str = "", d: str = "",
-              phi: str = "", use_factordb: bool = True) -> dict:
+              phi: str = "", use_factordb: bool | None = None) -> dict:
     """Recover RSA plaintext. Pass numbers as decimal or 0x-hex strings. Tries, in order:
     given p/q/d/phi, small-exponent cube root (incl. c + k*n), trial division and multi-prime,
-    Fermat, Pollard p-1, Wiener (large e), then factordb.com."""
+    Fermat, Pollard p-1, Wiener (large e), then factordb.com (unless disabled by env/hosted)."""
+    from .config import factordb_default
+
+    if use_factordb is None:
+        use_factordb = factordb_default()
     N, E, C = _int(n), _int(e), _int(c)
     P, Q, D, PHI = _int(p), _int(q), _int(d), _int(phi)
     log: list[str] = []
